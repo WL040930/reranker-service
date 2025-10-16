@@ -1,32 +1,84 @@
 """Expose the FastAPI application for deployment."""
 
 import os
+import logging
+import gc
 
 import uvicorn
 
+# Set memory optimization environment variables before any imports
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
+# Suppress progress bars and verbose logging from transformers
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+
+# Disable tqdm progress bars globally
+try:
+    import tqdm
+    tqdm.tqdm.disable = True
+except ImportError:
+    pass
+
+# Memory-optimized default configuration
+os.environ.setdefault("RERANKER_MODEL_NAME", "cross-encoder/ms-marco-TinyBERT-L-2-v2")
+os.environ.setdefault("RERANKER_CACHE_SIZE", "4")
+os.environ.setdefault("RERANKER_MAX_LENGTH", "64")
+os.environ.setdefault("RERANKER_PRELOAD_MODEL", "true")  # Enable preloading by default
+
 from reranker_service.api import create_app
 
+# Configure aggressive garbage collection for memory optimization
+gc.set_threshold(100, 5, 5)
+
+# Create the app instance
 app = create_app()
 
 __all__ = ["app"]
 
 
 def main() -> None:
-    """Run the FastAPI app with Uvicorn."""
+    """Run the FastAPI app with memory-optimized Uvicorn configuration."""
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+    
     host = os.getenv("RERANKER_HOST", "0.0.0.0")
     port = int(os.getenv("RERANKER_PORT", "8000"))
     
-    # Memory-efficient Uvicorn configuration
-    uvicorn.run(
-        app, 
-        host=host, 
-        port=port, 
-        reload=False,
-        workers=1,  # Single worker to minimize memory usage
-        limit_concurrency=10,  # Limit concurrent connections
-        timeout_keep_alive=5,  # Reduce keep-alive timeout
-        access_log=False  # Disable access logs to save memory
-    )
+    logger.info("🚀 Starting Memory-Optimized Reranker Service")
+    logger.info(f"   Host: {host}:{port}")
+    logger.info(f"   Model: {os.getenv('RERANKER_MODEL_NAME')}")
+    logger.info(f"   Max Length: {os.getenv('RERANKER_MAX_LENGTH')}")
+    logger.info(f"   Cache Size: {os.getenv('RERANKER_CACHE_SIZE')}")
+    logger.info(f"   Preload Model: {os.getenv('RERANKER_PRELOAD_MODEL')}")
+    logger.info("   Memory Target: <400MB")
+    
+    try:
+        # Memory-optimized Uvicorn configuration
+        uvicorn.run(
+            app, 
+            host=host, 
+            port=port, 
+            reload=False,
+            workers=1,                    # Single worker to minimize memory usage
+            limit_concurrency=5,          # Limit concurrent connections
+            timeout_keep_alive=2,         # Short keep-alive timeout
+            access_log=False,             # Disable access logs to save memory
+            server_header=False,          # Disable server header
+            date_header=False,            # Disable date header
+            log_level="info",             # Moderate logging
+            loop="asyncio",               # Use asyncio loop for better memory management
+            http="h11"                    # Use h11 for lower memory usage
+        )
+    except Exception as e:
+        logger.error(f"Failed to start server: {e}")
+        raise
 
 
 if __name__ == "__main__":

@@ -65,7 +65,8 @@ class RerankResponse(BaseModel):
 @lru_cache(maxsize=1)
 def get_service(config: Optional[AppConfig] = None) -> CrossEncoderReranker:
     """Return a singleton reranker service instance."""
-    return CrossEncoderReranker(config=config or get_config())
+    cfg = config or get_config()
+    return CrossEncoderReranker(config=cfg, preload_model=cfg.preload_model)
 
 
 def create_app() -> FastAPI:
@@ -78,9 +79,22 @@ def create_app() -> FastAPI:
     )
 
     @app.on_event("startup")
-    async def configure_logging() -> None:
+    async def startup_event() -> None:
         logging.basicConfig(level=config.log_level)
         logger.info("Reranker service starting")
+        
+        # Preload model if configured
+        if config.preload_model:
+            logger.info("Preloading model at startup...")
+            try:
+                service = get_service(config=config)
+                # Force model loading by accessing the model
+                service._load_model()
+                logger.info("Model preloaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to preload model: {e}")
+                # Don't fail startup, just log the error
+                pass
 
     @app.post(
         "/rerank",

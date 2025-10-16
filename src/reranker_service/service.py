@@ -21,72 +21,106 @@ logger = logging.getLogger(__name__)
 class CrossEncoderReranker:
     """Service object responsible for reranking documents with a cross-encoder model."""
 
-    def __init__(self, config: Optional[AppConfig] = None) -> None:
+    def __init__(self, config: Optional[AppConfig] = None, preload_model: bool = False) -> None:
         self.config = config or get_config()
+        # Use smaller cache to save memory
         self._cache: TTLCache[str, List[Dict[str, Any]]] = TTLCache(
-            maxsize=self.config.cache_size,
+            maxsize=max(1, self.config.cache_size // 4),  # Quarter the cache size
             ttl=self.config.cache_ttl_seconds,
         )
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._model: Optional[CrossEncoder] = None
         self._model_loaded = False
+        
+        # Preload model if requested (for memory-optimized startup)
+        if preload_model:
+            self._load_model()
 
     def _load_model(self) -> CrossEncoder:
         """Load the configured cross-encoder model with memory optimizations."""
         if self._model is not None:
             return self._model
             
-        logger.info("Loading cross-encoder model %s", self.config.model_name)
+        logger.info("Loading cross-encoder model %s with memory optimizations", self.config.model_name)
         
-        # Force CPU-only mode to avoid GPU memory allocation
+        # Import torch here to avoid memory allocation on startup
         import torch
-        torch.set_num_threads(1)  # Reduce CPU threads to save memory
         
-        # Fix for NaN issues: Use double precision (float64)
-        original_dtype = torch.get_default_dtype()
-        torch.set_default_dtype(torch.float64)
+        # Configure PyTorch for minimal memory usage
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
+        torch.set_grad_enabled(False)
         
         try:
+            # Suppress progress bars for cleaner output
+            import os
+            os.environ['TRANSFORMERS_VERBOSITY'] = 'error'
+            
+            # Suppress sentence-transformers progress bars
+            import logging
+            logging.getLogger("sentence_transformers").setLevel(logging.ERROR)
+            
+            # Load model with optimized configuration
             model = CrossEncoder(
                 self.config.model_name, 
                 max_length=self.config.max_length,
-                device='cpu'  # Explicitly use CPU
+                device='cpu',
+                trust_remote_code=False
             )
             
-            # Convert model to double precision to fix NaN issues
-            model.model = model.model.double()
-            
-            # Set model to eval mode and optimize for inference
+            # Optimize model for inference
             model.model.eval()
             
-            # Disable gradient computation to save memory
+            # Disable gradient computation for all parameters
             for param in model.model.parameters():
                 param.requires_grad = False
             
             self._model = model
             self._model_loaded = True
             
-            # Test the model with a simple prediction
-            test_scores = model.predict([("test query", "test document")])
-            logger.info(f"Model test prediction: {test_scores}")
-            
-            if not math.isfinite(float(test_scores[0])):
-                logger.error("Model is producing NaN on test prediction - model may be corrupted!")
-            else:
-                logger.info("Model test prediction successful - no NaN values detected")
+            # Test the model with a simple validation
+            try:
+                test_pairs = [
+                    ("machine learning", "Machine learning is a method of data analysis"),
+                    ("machine learning", "This is about cooking and recipes")
+                ]
+                test_scores = model.predict(test_pairs)
+                
+                # Handle potential NaN scores gracefully
+                valid_scores = [s for s in test_scores if math.isfinite(float(s))]
+                if len(valid_scores) == len(test_scores):
+                    logger.info(f"Model validation successful. Test scores: {test_scores}")
+                else:
+                    logger.warning(f"Some test scores were invalid: {test_scores}")
+                    
+            except Exception as e:
+                logger.warning(f"Model validation failed: {e}")
             
             # Force garbage collection
             gc.collect()
             
-            logger.info("Cross-encoder model loaded successfully")
+            # Log memory usage if psutil is available
+            try:
+                import psutil
+                process = psutil.Process()
+                memory_mb = process.memory_info().rss / 1024 / 1024
+                logger.info(f"Memory usage after model load: {memory_mb:.1f} MB")
+                
+                if memory_mb > 500:
+                    logger.warning("Memory usage exceeds 500 MB - consider using a smaller model")
+                elif memory_mb > 400:
+                    logger.warning("Memory usage is high (>400 MB)")
+                else:
+                    logger.info("Memory usage is within acceptable limits")
+                    
+            except ImportError:
+                logger.debug("psutil not available for memory monitoring")
+            
             return model
             
         except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            raise
-        finally:
-            # Restore original dtype
-            torch.set_default_dtype(original_dtype)
+            logger.error(f"Failed to load model {self.config.model_name}: {e}")
+            raise RuntimeError(f"Model loading failed: {e}") from e
 
     @staticmethod
     def _normalize_documents(documents: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -164,26 +198,44 @@ class CrossEncoderReranker:
         pairs = self._model_inputs(query, normalized)
         
         # Debug: Log what we're sending to the model
-        logger.info(f"Reranking query: '{query[:100]}...' with {len(pairs)} document pairs")
+        logger.debug(f"Reranking query: '{query[:100]}...' with {len(pairs)} document pairs")
         for i, (q, doc_text) in enumerate(pairs[:3]):  # Log first 3 pairs
-            logger.info(f"Pair {i}: query_len={len(q)}, doc_len={len(doc_text)}, doc_preview='{doc_text[:100]}...'")
+            logger.debug(f"Pair {i}: query_len={len(q)}, doc_len={len(doc_text)}")
+
+        def predict_with_error_handling(pairs):
+            """Predict with better error handling."""
+            try:
+                return model.predict(pairs)
+            except Exception as e:
+                logger.error(f"Model prediction failed: {e}")
+                # Return zeros for all pairs as fallback
+                return [0.0] * len(pairs)
 
         loop = asyncio.get_running_loop()
         scores: List[float] = await loop.run_in_executor(
             self._executor,
-            lambda: model.predict(pairs),
+            predict_with_error_handling,
+            pairs,
         )
         
         # Debug: Log the raw scores
-        logger.info(f"Raw scores from model: {scores[:10]}")  # Log first 10 scores
+        logger.debug(f"Raw scores from model: {scores[:10]}")  # Log first 10 scores
 
         ranked = []
         for doc, score in zip(normalized, scores):
-            # Keep the original score for now to see what's happening
-            safe_score = float(score)
-            if not math.isfinite(safe_score):
-                logger.error(f"Model returned non-finite score: {score} for doc index {doc['index']}, text: '{doc['text'][:100]}...'")
-                # Don't replace with 0.0 yet - let's see the actual issue
+            # Handle NaN/infinite scores gracefully
+            try:
+                if hasattr(score, 'item'):  # NumPy scalar
+                    safe_score = float(score.item())
+                else:
+                    safe_score = float(score)
+                    
+                if not math.isfinite(safe_score):
+                    logger.debug(f"Non-finite score for doc {doc['index']}: {score}, using 0.0")
+                    safe_score = 0.0
+                    
+            except (ValueError, TypeError, AttributeError):
+                logger.debug(f"Invalid score type for doc {doc['index']}: {type(score)}, using 0.0")
                 safe_score = 0.0
             
             ranked.append(

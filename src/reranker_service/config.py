@@ -12,12 +12,13 @@ from typing import Optional
 class AppConfig:
     """Runtime configuration loaded from environment variables."""
 
-    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    max_length: int = 256  # Reduced from 512 to save memory
-    cache_size: int = 32   # Reduced from 128 to save memory
-    cache_ttl_seconds: int = 300  # Reduced from 900 to save memory
+    model_name: str = "cross-encoder/ms-marco-TinyBERT-L-2-v2"  # Smaller default model
+    max_length: int = 64   # Optimized for memory usage
+    cache_size: int = 4    # Small cache for memory efficiency
+    cache_ttl_seconds: int = 180  # Short cache TTL
     request_timeout_seconds: float = 30.0
     log_level: str = "INFO"
+    preload_model: bool = True  # Enable preloading by default
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -47,6 +48,12 @@ class AppConfig:
             except ValueError:
                 return default
 
+        def get_bool(key: str, default: bool) -> bool:
+            raw = get_env(key)
+            if raw is None:
+                return default
+            return raw.lower() in ("true", "1", "yes", "on")
+
         return cls(
             model_name=get_env("RERANKER_MODEL_NAME", cls.model_name),
             max_length=get_int("RERANKER_MAX_LENGTH", cls.max_length),
@@ -56,6 +63,7 @@ class AppConfig:
                 "RERANKER_REQUEST_TIMEOUT_SECONDS", cls.request_timeout_seconds
             ),
             log_level=get_env("RERANKER_LOG_LEVEL", cls.log_level) or cls.log_level,
+            preload_model=get_bool("RERANKER_PRELOAD_MODEL", cls.preload_model),
         )
 
 
