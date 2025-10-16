@@ -12,7 +12,7 @@ from typing import Optional
 class AppConfig:
     """Runtime configuration loaded from environment variables."""
 
-    model_name: str = "cross-encoder/ms-marco-MiniLM-L-12-v2"
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     max_length: int = 512
     cache_size: int = 128
     cache_ttl_seconds: int = 900
