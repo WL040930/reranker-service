@@ -8,8 +8,10 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "sentence-transformers>=2.6",
+    "torch>=2.0.0",
     "cachetools>=5.3",
     "pydantic>=2.12.2",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]

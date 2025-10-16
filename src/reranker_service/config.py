@@ -13,9 +13,9 @@ class AppConfig:
     """Runtime configuration loaded from environment variables."""
 
     model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    max_length: int = 512
-    cache_size: int = 128
-    cache_ttl_seconds: int = 900
+    max_length: int = 256  # Reduced from 512 to save memory
+    cache_size: int = 32   # Reduced from 128 to save memory
+    cache_ttl_seconds: int = 300  # Reduced from 900 to save memory
     request_timeout_seconds: float = 30.0
     log_level: str = "INFO"
 

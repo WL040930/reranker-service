@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -26,13 +27,40 @@ class CrossEncoderReranker:
             ttl=self.config.cache_ttl_seconds,
         )
         self._executor = ThreadPoolExecutor(max_workers=1)
-        self._model = self._load_model()
+        self._model: Optional[CrossEncoder] = None
+        self._model_loaded = False
 
     def _load_model(self) -> CrossEncoder:
-        """Load the configured cross-encoder model."""
+        """Load the configured cross-encoder model with memory optimizations."""
+        if self._model is not None:
+            return self._model
+            
         logger.info("Loading cross-encoder model %s", self.config.model_name)
-        model = CrossEncoder(self.config.model_name, max_length=self.config.max_length)
-        logger.info("Cross-encoder model loaded")
+        
+        # Force CPU-only mode to avoid GPU memory allocation
+        import torch
+        torch.set_num_threads(1)  # Reduce CPU threads to save memory
+        
+        model = CrossEncoder(
+            self.config.model_name, 
+            max_length=self.config.max_length,
+            device='cpu'  # Explicitly use CPU
+        )
+        
+        # Set model to eval mode and optimize for inference
+        model.model.eval()
+        
+        # Disable gradient computation to save memory
+        for param in model.model.parameters():
+            param.requires_grad = False
+        
+        self._model = model
+        self._model_loaded = True
+        
+        # Force garbage collection
+        gc.collect()
+        
+        logger.info("Cross-encoder model loaded successfully")
         return model
 
     @staticmethod
@@ -93,12 +121,14 @@ class CrossEncoderReranker:
             cached = self._cache[cache_key]
             return cached[:top_k] if top_k is not None else list(cached)
 
+        # Lazy load model only when actually needed
+        model = self._load_model()
         pairs = self._model_inputs(query, normalized)
 
         loop = asyncio.get_running_loop()
         scores: List[float] = await loop.run_in_executor(
             self._executor,
-            lambda: self._model.predict(pairs),
+            lambda: model.predict(pairs),
         )
 
         ranked = []
@@ -120,14 +150,11 @@ class CrossEncoderReranker:
         return ranked
 
     async def health(self) -> bool:
-        """Return True when the model is available for inference."""
+        """Return True when the service is ready (lightweight check)."""
         try:
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                self._executor,
-                lambda: self._model.tokenizer is not None,
-            )
-            return True
+            # Lightweight health check - don't load model just for health
+            # Just verify the service is initialized properly
+            return self.config is not None and self._executor is not None
         except Exception as exc:  # pragma: no cover - defensive
             logger.error("Health check failed: %s", exc)
             return False

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import psutil
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
@@ -126,6 +128,31 @@ def create_app() -> FastAPI:
                 detail="Model not ready",
             )
         return {"status": "ok"}
+
+    @app.get(
+        "/metrics",
+        status_code=status.HTTP_200_OK,
+    )
+    async def metrics() -> Dict[str, Any]:
+        """Return memory usage and service metrics."""
+        try:
+            process = psutil.Process(os.getpid())
+            memory_info = process.memory_info()
+            
+            return {
+                "memory": {
+                    "rss_mb": round(memory_info.rss / 1024 / 1024, 2),
+                    "vms_mb": round(memory_info.vms / 1024 / 1024, 2),
+                },
+                "cpu_percent": process.cpu_percent(interval=0.1),
+                "num_threads": process.num_threads(),
+            }
+        except Exception as exc:
+            logger.exception("Failed to get metrics: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve metrics",
+            ) from exc
 
     return app
 
