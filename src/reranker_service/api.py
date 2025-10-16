@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+import math
 import psutil
 from functools import lru_cache
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
@@ -21,7 +22,15 @@ class Document(BaseModel):
     """Single document representation."""
 
     text: str
-    metadata: Dict[str, Any] | None = None
+    metadata: Optional[Dict[str, Any]] = None
+    
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        """Log if text is empty or problematic."""
+        if not value or not value.strip():
+            logger.warning("Received document with empty or whitespace-only text")
+        return value
 
 
 class RerankRequest(BaseModel):
@@ -138,14 +147,27 @@ def create_app() -> FastAPI:
         try:
             process = psutil.Process(os.getpid())
             memory_info = process.memory_info()
-            
+            def _safe_float(value: float) -> float:
+                try:
+                    v = float(value)
+                except Exception:
+                    return 0.0
+                if not math.isfinite(v):
+                    return 0.0
+                return v
+
+            rss_mb = _safe_float(memory_info.rss / 1024 / 1024)
+            vms_mb = _safe_float(memory_info.vms / 1024 / 1024)
+            cpu_pct = _safe_float(process.cpu_percent(interval=0.1))
+            num_threads = int(process.num_threads()) if process.num_threads() is not None else 0
+
             return {
                 "memory": {
-                    "rss_mb": round(memory_info.rss / 1024 / 1024, 2),
-                    "vms_mb": round(memory_info.vms / 1024 / 1024, 2),
+                    "rss_mb": round(rss_mb, 2),
+                    "vms_mb": round(vms_mb, 2),
                 },
-                "cpu_percent": process.cpu_percent(interval=0.1),
-                "num_threads": process.num_threads(),
+                "cpu_percent": cpu_pct,
+                "num_threads": num_threads,
             }
         except Exception as exc:
             logger.exception("Failed to get metrics: %s", exc)

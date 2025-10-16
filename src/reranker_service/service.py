@@ -6,6 +6,7 @@ import asyncio
 import gc
 import hashlib
 import logging
+import math
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -41,27 +42,51 @@ class CrossEncoderReranker:
         import torch
         torch.set_num_threads(1)  # Reduce CPU threads to save memory
         
-        model = CrossEncoder(
-            self.config.model_name, 
-            max_length=self.config.max_length,
-            device='cpu'  # Explicitly use CPU
-        )
+        # Fix for NaN issues: Use double precision (float64)
+        original_dtype = torch.get_default_dtype()
+        torch.set_default_dtype(torch.float64)
         
-        # Set model to eval mode and optimize for inference
-        model.model.eval()
-        
-        # Disable gradient computation to save memory
-        for param in model.model.parameters():
-            param.requires_grad = False
-        
-        self._model = model
-        self._model_loaded = True
-        
-        # Force garbage collection
-        gc.collect()
-        
-        logger.info("Cross-encoder model loaded successfully")
-        return model
+        try:
+            model = CrossEncoder(
+                self.config.model_name, 
+                max_length=self.config.max_length,
+                device='cpu'  # Explicitly use CPU
+            )
+            
+            # Convert model to double precision to fix NaN issues
+            model.model = model.model.double()
+            
+            # Set model to eval mode and optimize for inference
+            model.model.eval()
+            
+            # Disable gradient computation to save memory
+            for param in model.model.parameters():
+                param.requires_grad = False
+            
+            self._model = model
+            self._model_loaded = True
+            
+            # Test the model with a simple prediction
+            test_scores = model.predict([("test query", "test document")])
+            logger.info(f"Model test prediction: {test_scores}")
+            
+            if not math.isfinite(float(test_scores[0])):
+                logger.error("Model is producing NaN on test prediction - model may be corrupted!")
+            else:
+                logger.info("Model test prediction successful - no NaN values detected")
+            
+            # Force garbage collection
+            gc.collect()
+            
+            logger.info("Cross-encoder model loaded successfully")
+            return model
+            
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            raise
+        finally:
+            # Restore original dtype
+            torch.set_default_dtype(original_dtype)
 
     @staticmethod
     def _normalize_documents(documents: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -70,6 +95,16 @@ class CrossEncoderReranker:
         for index, doc in enumerate(documents):
             if isinstance(doc, dict):
                 text = doc.get("text") or doc.get("content") or doc.get("answer") or ""
+                # Clean whitespace but don't filter out yet
+                if isinstance(text, str):
+                    text = text.strip()
+                else:
+                    text = str(text).strip()
+                
+                # Log warning but include the document
+                if not text:
+                    logger.warning(f"Document at index {index} has empty text - this may cause NaN scores")
+                
                 normalized.append(
                     {
                         "index": index,
@@ -79,12 +114,15 @@ class CrossEncoderReranker:
                     }
                 )
             else:
+                text = str(doc).strip()
+                if not text:
+                    logger.warning(f"Document at index {index} has empty text - this may cause NaN scores")
                 normalized.append(
                     {
                         "index": index,
-                        "text": str(doc),
+                        "text": text,
                         "metadata": {},
-                        "raw": {"text": str(doc)},
+                        "raw": {"text": text},
                     }
                 )
         return normalized
@@ -124,19 +162,34 @@ class CrossEncoderReranker:
         # Lazy load model only when actually needed
         model = self._load_model()
         pairs = self._model_inputs(query, normalized)
+        
+        # Debug: Log what we're sending to the model
+        logger.info(f"Reranking query: '{query[:100]}...' with {len(pairs)} document pairs")
+        for i, (q, doc_text) in enumerate(pairs[:3]):  # Log first 3 pairs
+            logger.info(f"Pair {i}: query_len={len(q)}, doc_len={len(doc_text)}, doc_preview='{doc_text[:100]}...'")
 
         loop = asyncio.get_running_loop()
         scores: List[float] = await loop.run_in_executor(
             self._executor,
             lambda: model.predict(pairs),
         )
+        
+        # Debug: Log the raw scores
+        logger.info(f"Raw scores from model: {scores[:10]}")  # Log first 10 scores
 
         ranked = []
         for doc, score in zip(normalized, scores):
+            # Keep the original score for now to see what's happening
+            safe_score = float(score)
+            if not math.isfinite(safe_score):
+                logger.error(f"Model returned non-finite score: {score} for doc index {doc['index']}, text: '{doc['text'][:100]}...'")
+                # Don't replace with 0.0 yet - let's see the actual issue
+                safe_score = 0.0
+            
             ranked.append(
                 {
                     "index": doc["index"],
-                    "score": float(score),
+                    "score": safe_score,
                     "document": doc["raw"],
                 }
             )
