@@ -1,0 +1,57 @@
+Metadata-Version: 2.4
+Name: reranker-service
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.13
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn[standard]>=0.29
+Requires-Dist: sentence-transformers>=2.6
+Requires-Dist: cachetools>=5.3
+Requires-Dist: pydantic>=2.12.2
+Provides-Extra: dev
+Requires-Dist: httpx>=0.27; extra == "dev"
+
+## Reranker Service
+
+FastAPI application that loads a cross-encoder model from `sentence-transformers`
+and exposes HTTP endpoints to rerank documents for a query.
+
+### Endpoints
+
+- `POST /rerank`  
+  Request body:
+  ```json
+  {
+    "query": "who founded fastapi",
+    "documents": [
+      {"text": "FastAPI was created by Sebastian Ramirez."},
+      {"text": "Flask is a Python microframework released in 2010."}
+    ],
+    "top_k": 1
+  }
+  ```
+  Response:
+  ```json
+  {
+    "rankings": [{"index": 0, "score": 0.91}],
+    "top_k_applied": true
+  }
+  ```
+
+- `GET /health` returns `{"status":"ok"}` when the model is ready.
+
+### Run locally
+
+```bash
+uvicorn reranker_service.api:app --host 0.0.0.0 --port 8000
+```
+
+Model name and cache behaviour can be configured through environment variables:
+
+- `RERANKER_MODEL_NAME`
+- `RERANKER_MAX_LENGTH`
+- `RERANKER_CACHE_SIZE`
+- `RERANKER_CACHE_TTL_SECONDS`
+- `RERANKER_REQUEST_TIMEOUT_SECONDS`
+- `RERANKER_LOG_LEVEL`

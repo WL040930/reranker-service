@@ -1,0 +1,307 @@
+"""
+Reranker API Service
+
+This module provides an interface to call an external MS-MARCO cross-encoder API
+for document reranking. It abstracts the API communication and provides
+error handling and caching.
+"""
+
+import asyncio
+import json
+import logging
+import requests
+from concurrent.futures import ThreadPoolExecutor
+from typing import List, Dict, Optional
+from cachetools import TTLCache
+from src.config import Config
+
+logger = logging.getLogger(__name__)
+
+
+class RerankerAPIService:
+    """Service to communicate with external MS-MARCO cross-encoder API."""
+    
+    def __init__(
+        self,
+        api_url: str = None,
+        api_key: str = None,
+        timeout: float = None,
+        cache_size: int = None,
+        cache_ttl: int = None
+    ):
+        """
+        Initialize the Reranker API Service.
+        
+        Args:
+            api_url: URL of the external reranker API
+            api_key: API key for authentication (if required)
+            timeout: Request timeout in seconds
+            cache_size: Size of the response cache
+            cache_ttl: Cache TTL in seconds
+        """
+        # Use config values or defaults
+        self.api_url = api_url or getattr(Config, 'RERANKER_API_URL', None)
+        self.api_key = api_key or getattr(Config, 'RERANKER_API_KEY', None)
+        self.timeout = timeout or getattr(Config, 'RERANKER_API_TIMEOUT', 30.0)
+        
+        # Setup cache
+        cache_size = cache_size or getattr(Config, 'RERANKER_CACHE_SIZE', 50)
+        cache_ttl = cache_ttl or getattr(Config, 'CACHE_TTL', 1800)
+        self.cache = TTLCache(maxsize=cache_size, ttl=cache_ttl)
+        
+        # Validate configuration
+        if not self.api_url:
+            logger.warning("Reranker API URL not configured")
+        
+        logger.info(f"RerankerAPIService initialized with URL: {self.api_url}")
+    
+    def _get_cache_key(self, query: str, documents: List[Dict]) -> str:
+        """Generate a cache key for the request."""
+        # Create a stable hash from query and document texts
+        import hashlib
+        doc_texts = [f"{doc.get('question', '')}{doc.get('answer', '')[:100]}" for doc in documents[:10]]
+        content = f"{query}{''.join(doc_texts)}"
+        return hashlib.md5(content.encode()).hexdigest()[:16]
+    
+    def _prepare_request_payload(self, query: str, documents: List[Dict]) -> Dict:
+        """
+        Prepare the request payload for the API.
+        
+        Expected format for MS-MARCO cross-encoder API:
+        {
+            "query": "user query",
+            "documents": [
+                {
+                    "text": "document text to rerank",
+                    "metadata": {...}  // optional
+                },
+                ...
+            ]
+        }
+        """
+        doc_list = []
+        for i, doc in enumerate(documents):
+            # Combine question and answer for reranking
+            doc_text = f"{doc.get('question', '')} {doc.get('answer', '')}"
+            
+            doc_item = {
+                "text": doc_text,
+                "metadata": {
+                    "index": i,
+                    "original_score": doc.get('score'),
+                    "question": doc.get('question', ''),
+                    "answer": doc.get('answer', '')[:200] + "..." if len(doc.get('answer', '')) > 200 else doc.get('answer', '')
+                }
+            }
+            doc_list.append(doc_item)
+        
+        return {
+            "query": query,
+            "documents": doc_list
+        }
+    
+    def _process_api_response(self, response_data: Dict, original_docs: List[Dict]) -> List[Dict]:
+        """
+        Process the API response and return reranked documents.
+        
+        Expected response format:
+        {
+            "rankings": [
+                {
+                    "index": 0,
+                    "score": 0.95
+                },
+                ...
+            ]
+        }
+        """
+        try:
+            rankings = response_data.get('rankings', [])
+            
+            if not rankings:
+                logger.warning("API response missing rankings")
+                return self._fallback_ranking(original_docs)
+            
+            # Apply rankings to original documents
+            ranked_docs = []
+            for ranking in rankings:
+                if isinstance(ranking, dict) and "index" in ranking and "score" in ranking:
+                    doc_index = ranking["index"]
+                    score = float(ranking["score"])
+                    
+                    if 0 <= doc_index < len(original_docs):
+                        doc_copy = original_docs[doc_index].copy()
+                        doc_copy['rerank_score'] = score
+                        if 'score' in doc_copy:
+                            doc_copy['original_score'] = doc_copy['score']
+                        ranked_docs.append(doc_copy)
+            
+            # Sort by rerank score (highest first)
+            ranked_docs.sort(key=lambda x: x.get('rerank_score', 0), reverse=True)
+            
+            logger.debug(f"Successfully processed API response: {len(original_docs)} -> {len(ranked_docs)} documents")
+            return ranked_docs
+            
+        except Exception as e:
+            logger.error(f"Error processing API response: {e}")
+            return self._fallback_ranking(original_docs)
+    
+    def _fallback_ranking(self, documents: List[Dict]) -> List[Dict]:
+        """Fallback method when API call fails."""
+        logger.warning("Using fallback ranking (original order)")
+        docs_with_scores = []
+        for i, doc in enumerate(documents):
+            doc_copy = doc.copy()
+            # Use original score or assign based on position
+            doc_copy['rerank_score'] = doc.get('score', 1.0 - (i * 0.1))
+            if 'score' in doc:
+                doc_copy['original_score'] = doc['score']
+            docs_with_scores.append(doc_copy)
+        
+        return docs_with_scores
+    
+    async def rerank_documents(
+        self,
+        query: str,
+        documents: List[Dict],
+        top_k: Optional[int] = None
+    ) -> List[Dict]:
+        """
+        Rerank documents using the external MS-MARCO cross-encoder API.
+        
+        Args:
+            query: The search query
+            documents: List of documents to rerank
+            top_k: Maximum number of documents to return
+            
+        Returns:
+            List of reranked documents with scores
+        """
+        if not documents:
+            return []
+        
+        if not self.api_url:
+            logger.warning("Reranker API URL not configured, using fallback")
+            return self._fallback_ranking(documents)[:top_k] if top_k else self._fallback_ranking(documents)
+        
+        # Check cache first
+        cache_key = self._get_cache_key(query, documents)
+        if cache_key in self.cache:
+            logger.debug("Using cached reranking results")
+            cached_result = self.cache[cache_key]
+            return cached_result[:top_k] if top_k else cached_result
+        
+        try:
+            # Prepare request payload
+            payload = self._prepare_request_payload(query, documents)
+            
+            # Setup headers
+            headers = {
+                "Content-Type": "application/json"
+            }
+            
+            # Add API key if configured
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            
+            # Make API request using requests in a thread pool
+            loop = asyncio.get_event_loop()
+            
+            def make_request():
+                logger.debug(f"Making API request to {self.api_url} with {len(documents)} documents")
+                
+                response = requests.post(
+                    self.api_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.timeout
+                )
+                
+                return response
+            
+            # Execute the request in a thread pool to keep it async
+            with ThreadPoolExecutor() as executor:
+                response = await loop.run_in_executor(executor, make_request)
+                
+                if response.status_code == 200:
+                    response_data = response.json()
+                    reranked_docs = self._process_api_response(response_data, documents)
+                    
+                    # Apply top_k limit
+                    if top_k is not None:
+                        reranked_docs = reranked_docs[:top_k]
+                    
+                    # Cache results
+                    self.cache[cache_key] = reranked_docs
+                    
+                    logger.info(f"API reranking completed: {len(documents)} -> {len(reranked_docs)} documents")
+                    return reranked_docs
+                
+                else:
+                    error_text = response.text
+                    logger.error(f"API request failed with status {response.status_code}: {error_text}")
+                    return self._fallback_ranking(documents)[:top_k] if top_k else self._fallback_ranking(documents)
+        
+        except asyncio.TimeoutError:
+            logger.error(f"API request timeout ({self.timeout}s)")
+            return self._fallback_ranking(documents)[:top_k] if top_k else self._fallback_ranking(documents)
+        
+        except Exception as e:
+            logger.error(f"API reranking failed: {e}")
+            return self._fallback_ranking(documents)[:top_k] if top_k else self._fallback_ranking(documents)
+    
+    def health_check(self) -> bool:
+        """
+        Perform a health check on the reranker API.
+        
+        Returns:
+            True if API is healthy, False otherwise
+        """
+        if not self.api_url:
+            return False
+        
+        try:
+            # Create a simple test payload
+            test_payload = {
+                "query": "test query",
+                "documents": [
+                    {"text": "test document", "metadata": {"index": 0}}
+                ]
+            }
+            
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            
+            response = requests.post(
+                self.api_url,
+                json=test_payload,
+                headers=headers,
+                timeout=5.0  # Short timeout for health check
+            )
+            
+            return response.status_code == 200
+            
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            return False
+
+
+# Global instance
+_reranker_api_service = None
+
+
+def get_reranker_api_service() -> RerankerAPIService:
+    """Get the global reranker API service instance."""
+    global _reranker_api_service
+    
+    if _reranker_api_service is None:
+        _reranker_api_service = RerankerAPIService()
+    
+    return _reranker_api_service
+
+
+def reset_reranker_api_service():
+    """Reset the global instance (useful for testing)."""
+    global _reranker_api_service
+    _reranker_api_service = None
