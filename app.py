@@ -14,7 +14,7 @@ __all__ = ["app"]
 def main() -> None:
     """Run the FastAPI app with Uvicorn."""
     host = os.getenv("RERANKER_HOST", "0.0.0.0")
-    port = int(os.getenv("RERANKER_PORT", "10000"))
+    port = int(os.getenv("RERANKER_PORT", "8000"))
     uvicorn.run(app, host=host, port=port, reload=False)
 
 
