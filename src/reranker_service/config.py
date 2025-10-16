@@ -8,7 +8,7 @@ from functools import lru_cache
 from typing import Optional
 
 
-@dataclass
+@dataclass(frozen=True)
 class AppConfig:
     """Runtime configuration loaded from environment variables."""
 
