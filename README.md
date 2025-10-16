@@ -44,6 +44,24 @@ for a query.
 
 ### Run locally
 
+#### Option 1: Using environment files (recommended)
+
+```bash
+# For 512MB servers (development/small servers)
+cp .env.dev .env
+python -m uvicorn reranker_service.api:app --host 0.0.0.0 --port 8000
+
+# For production (1GB+ servers)
+cp .env.production .env
+python -m uvicorn reranker_service.api:app --host 0.0.0.0 --port 8000
+
+# For very tight memory constraints
+cp .env.minimal .env
+python -m uvicorn reranker_service.api:app --host 0.0.0.0 --port 8000
+```
+
+#### Option 2: Direct command
+
 ```bash
 uvicorn reranker_service.api:app --host 0.0.0.0 --port 8000
 ```
