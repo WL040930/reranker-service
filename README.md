@@ -3,15 +3,15 @@ title: Reranker Service
 emoji: 🧠
 colorFrom: indigo
 colorTo: blue
-sdk: fastapi
-sdk_version: "0.103.0"
+sdk: docker
 app_file: app.py
 pinned: false
 ---
 
-# Memory-Optimized Reranker Service
+# 🧠 Reranker Service (FastAPI + Docker)
 
-A production-ready reranker service optimized to run within 512MB memory constraints with automatic model preloading.
+This Space runs a **FastAPI-based reranker microservice** using `cross-encoder/ms-marco-TinyBERT-L-2-v2`.  
+It’s deployed via Docker for better compatibility with custom frameworks.
 
 ## ✅ Optimization Results
 
