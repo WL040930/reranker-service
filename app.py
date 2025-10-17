@@ -49,7 +49,7 @@ def main() -> None:
     logger = logging.getLogger(__name__)
     
     host = os.getenv("RERANKER_HOST", "0.0.0.0")
-    port = int(os.getenv("RERANKER_PORT", "8000"))
+    port = int(os.getenv("RERANKER_PORT", "7860"))
     
     logger.info("🚀 Starting Memory-Optimized Reranker Service")
     logger.info(f"   Host: {host}:{port}")

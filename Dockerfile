@@ -58,8 +58,8 @@ ENV RERANKER_LOG_LEVEL=INFO
 ENV RERANKER_HOST=0.0.0.0
 
 # RERANKER_PORT: Port to bind the server to
-#   Default: 8000
-ENV RERANKER_PORT=8000
+#   Default: 7860 (Hugging Face Spaces standard)
+ENV RERANKER_PORT=7860
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -75,13 +75,13 @@ RUN useradd --create-home --shell /bin/bash app
 WORKDIR /app
 
 # Copy dependency files first for better layer caching
-COPY pyproject.toml ./
+COPY requirements.txt ./
 
 # Upgrade pip and install build dependencies first
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -e . --verbose
+# Install Python dependencies from requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt --verbose
 
 # Copy application code
 COPY src/ ./src/
@@ -97,11 +97,11 @@ USER app
 RUN mkdir -p /home/app/.cache
 
 # Expose port
-EXPOSE 8000
+EXPOSE 7860
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:7860/health || exit 1
 
 # Run the application
 CMD ["python", "app.py"]
