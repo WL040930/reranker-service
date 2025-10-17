@@ -1,7 +1,0 @@
-README.md
-pyproject.toml
-src/reranker_service.egg-info/PKG-INFO
-src/reranker_service.egg-info/SOURCES.txt
-src/reranker_service.egg-info/dependency_links.txt
-src/reranker_service.egg-info/requires.txt
-src/reranker_service.egg-info/top_level.txt

@@ -65,6 +65,7 @@ ENV RERANKER_PORT=8000
 RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
@@ -73,11 +74,14 @@ RUN useradd --create-home --shell /bin/bash app
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files
+# Copy dependency files first for better layer caching
 COPY pyproject.toml ./
 
+# Upgrade pip and install build dependencies first
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
 # Install Python dependencies
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e . --verbose
 
 # Copy application code
 COPY src/ ./src/
@@ -96,8 +100,8 @@ RUN mkdir -p /home/app/.cache
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=10)"
+HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the application
 CMD ["python", "app.py"]

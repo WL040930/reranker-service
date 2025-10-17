@@ -61,21 +61,39 @@ def main() -> None:
     
     try:
         # Performance-optimized Uvicorn configuration
-        uvicorn.run(
-            app, 
-            host=host, 
-            port=port, 
-            reload=False,
-            workers=4,                    # Multiple workers for better throughput
-            limit_concurrency=50,         # Higher concurrent connections
-            timeout_keep_alive=30,        # Longer keep-alive timeout
-            access_log=True,              # Enable access logs
-            server_header=True,           # Enable server header
-            date_header=True,             # Enable date header
-            log_level="info",             # Standard logging
-            loop="uvloop",                # Use uvloop for better performance
-            http="httptools"              # Use httptools for better performance
-        )
+        uvicorn_config = {
+            "app": app,
+            "host": host,
+            "port": port,
+            "reload": False,
+            "workers": 4,                    # Multiple workers for better throughput
+            "limit_concurrency": 50,         # Higher concurrent connections
+            "timeout_keep_alive": 30,        # Longer keep-alive timeout
+            "access_log": True,              # Enable access logs
+            "server_header": True,           # Enable server header
+            "date_header": True,             # Enable date header
+            "log_level": "info",             # Standard logging
+        }
+        
+        # Try to use uvloop if available, fallback to asyncio
+        try:
+            import uvloop
+            uvicorn_config["loop"] = "uvloop"
+            logger.info("Using uvloop for enhanced performance")
+        except ImportError:
+            logger.info("uvloop not available, using asyncio")
+            uvicorn_config["loop"] = "asyncio"
+        
+        # Try to use httptools if available, fallback to h11
+        try:
+            import httptools
+            uvicorn_config["http"] = "httptools"
+            logger.info("Using httptools for enhanced HTTP performance")
+        except ImportError:
+            logger.info("httptools not available, using h11")
+            uvicorn_config["http"] = "h11"
+        
+        uvicorn.run(**uvicorn_config)
     except Exception as e:
         logger.error(f"Failed to start server: {e}")
         raise

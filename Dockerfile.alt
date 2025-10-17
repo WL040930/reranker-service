@@ -1,0 +1,72 @@
+# Alternative Dockerfile with better error handling
+FROM python:3.11-slim
+
+# Set environment variables for Python optimization
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Performance optimization environment variables
+ENV TOKENIZERS_PARALLELISM=true \
+    OMP_NUM_THREADS=4 \
+    MKL_NUM_THREADS=4 \
+    TRANSFORMERS_VERBOSITY=warning \
+    TRANSFORMERS_NO_ADVISORY_WARNINGS=1
+
+# Application configuration
+ENV RERANKER_MODEL_NAME=cross-encoder/ms-marco-MiniLM-L-6-v2 \
+    RERANKER_MAX_LENGTH=256 \
+    RERANKER_CACHE_SIZE=32 \
+    RERANKER_CACHE_TTL_SECONDS=600 \
+    RERANKER_REQUEST_TIMEOUT_SECONDS=60.0 \
+    RERANKER_PRELOAD_MODEL=true \
+    RERANKER_LOG_LEVEL=INFO \
+    RERANKER_HOST=0.0.0.0 \
+    RERANKER_PORT=8000
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    --no-install-recommends \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash --uid 1001 app
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt pyproject.toml ./
+
+# Upgrade pip and install dependencies
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip list
+
+# Copy source code
+COPY src/ ./src/
+COPY app.py ./
+
+# Change ownership
+RUN chown -R app:app /app
+
+# Switch to non-root user
+USER app
+
+# Create cache directory
+RUN mkdir -p /home/app/.cache/huggingface
+
+# Expose port
+EXPOSE 8000
+
+# Health check with longer startup time
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Run application
+CMD ["python", "app.py"]
