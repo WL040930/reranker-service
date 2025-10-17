@@ -51,24 +51,24 @@ def main() -> None:
     host = os.getenv("RERANKER_HOST", "0.0.0.0")
     port = int(os.getenv("RERANKER_PORT", "7860"))
     
-    logger.info("🚀 Starting Memory-Optimized Reranker Service")
+    logger.info("🚀 Starting Reranker Service (HF Spaces Optimized)")
     logger.info(f"   Host: {host}:{port}")
     logger.info(f"   Model: {os.getenv('RERANKER_MODEL_NAME')}")
     logger.info(f"   Max Length: {os.getenv('RERANKER_MAX_LENGTH')}")
     logger.info(f"   Cache Size: {os.getenv('RERANKER_CACHE_SIZE')}")
     logger.info(f"   Preload Model: {os.getenv('RERANKER_PRELOAD_MODEL')}")
-    logger.info("   Memory Target: <400MB")
+    logger.info("   Memory Target: ~300MB (HF Spaces optimized)")
     
     try:
-        # Performance-optimized Uvicorn configuration
+        # Uvicorn configuration optimized for HF Spaces
         uvicorn_config = {
-            "app": app,
+            "app": "app:app",                # Import string for proper worker support
             "host": host,
             "port": port,
             "reload": False,
-            "workers": 4,                    # Multiple workers for better throughput
-            "limit_concurrency": 50,         # Higher concurrent connections
-            "timeout_keep_alive": 30,        # Longer keep-alive timeout
+            "workers": 1,                    # Single worker for HF Spaces (more memory efficient)
+            "limit_concurrency": 20,         # Reasonable concurrency for HF Spaces
+            "timeout_keep_alive": 30,        # Keep-alive timeout
             "access_log": True,              # Enable access logs
             "server_header": True,           # Enable server header
             "date_header": True,             # Enable date header

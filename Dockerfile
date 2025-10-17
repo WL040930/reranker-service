@@ -7,11 +7,11 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Performance optimization environment variables (allowing more resources)
-ENV TOKENIZERS_PARALLELISM=true \
-    OMP_NUM_THREADS=4 \
-    MKL_NUM_THREADS=4 \
-    TRANSFORMERS_VERBOSITY=warning \
+# Performance optimization environment variables (optimized for HF Spaces)
+ENV TOKENIZERS_PARALLELISM=false \
+    OMP_NUM_THREADS=2 \
+    MKL_NUM_THREADS=2 \
+    TRANSFORMERS_VERBOSITY=error \
     TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 
 # ====================================
@@ -22,19 +22,19 @@ ENV TOKENIZERS_PARALLELISM=true \
 
 # Model Configuration:
 # RERANKER_MODEL_NAME: HuggingFace model name for cross-encoder reranking
-#   Default: cross-encoder/ms-marco-MiniLM-L-6-v2 (better performance model)
-#   Memory-optimized alternative: cross-encoder/ms-marco-TinyBERT-L-2-v2
-ENV RERANKER_MODEL_NAME=cross-encoder/ms-marco-MiniLM-L-6-v2
+#   Default: cross-encoder/ms-marco-TinyBERT-L-2-v2 (memory-optimized for HF Spaces)
+#   Alternative: cross-encoder/ms-marco-MiniLM-L-6-v2
+ENV RERANKER_MODEL_NAME=cross-encoder/ms-marco-TinyBERT-L-2-v2
 
 # RERANKER_MAX_LENGTH: Maximum token length for input sequences
-#   Default: 256 (higher for better accuracy)
-#   Memory-optimized: 64
-ENV RERANKER_MAX_LENGTH=256
+#   Default: 64 (memory-optimized for HF Spaces)
+#   Alternative: 256
+ENV RERANKER_MAX_LENGTH=64
 
 # RERANKER_CACHE_SIZE: Number of queries to cache in memory
-#   Default: 32 (higher for better performance)
-#   Memory-optimized: 4
-ENV RERANKER_CACHE_SIZE=32
+#   Default: 4 (memory-optimized for HF Spaces)
+#   Alternative: 32
+ENV RERANKER_CACHE_SIZE=4
 
 # RERANKER_CACHE_TTL_SECONDS: Cache time-to-live in seconds
 #   Default: 600 (10 minutes)
