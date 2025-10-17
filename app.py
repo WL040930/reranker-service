@@ -28,7 +28,7 @@ os.environ.setdefault("RERANKER_CACHE_SIZE", "4")
 os.environ.setdefault("RERANKER_MAX_LENGTH", "64")
 os.environ.setdefault("RERANKER_PRELOAD_MODEL", "true")  # Enable preloading by default
 
-from src.reranker_service.api import create_app
+from src.api import create_app
 
 # Configure aggressive garbage collection for memory optimization
 gc.set_threshold(100, 5, 5)

@@ -1,3 +1,14 @@
+---
+title: Reranker Service
+emoji: 🧠
+colorFrom: indigo
+colorTo: blue
+sdk: fastapi
+sdk_version: "0.103.0"
+app_file: app.py
+pinned: false
+---
+
 # Memory-Optimized Reranker Service
 
 A production-ready reranker service optimized to run within 512MB memory constraints with automatic model preloading.
