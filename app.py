@@ -28,7 +28,7 @@ os.environ.setdefault("RERANKER_CACHE_SIZE", "4")
 os.environ.setdefault("RERANKER_MAX_LENGTH", "64")
 os.environ.setdefault("RERANKER_PRELOAD_MODEL", "true")  # Enable preloading by default
 
-from reranker_service.api import create_app
+from src.reranker_service.api import create_app
 
 # Configure aggressive garbage collection for memory optimization
 gc.set_threshold(100, 5, 5)
@@ -60,21 +60,21 @@ def main() -> None:
     logger.info("   Memory Target: <400MB")
     
     try:
-        # Memory-optimized Uvicorn configuration
+        # Performance-optimized Uvicorn configuration
         uvicorn.run(
             app, 
             host=host, 
             port=port, 
             reload=False,
-            workers=1,                    # Single worker to minimize memory usage
-            limit_concurrency=5,          # Limit concurrent connections
-            timeout_keep_alive=2,         # Short keep-alive timeout
-            access_log=False,             # Disable access logs to save memory
-            server_header=False,          # Disable server header
-            date_header=False,            # Disable date header
-            log_level="info",             # Moderate logging
-            loop="asyncio",               # Use asyncio loop for better memory management
-            http="h11"                    # Use h11 for lower memory usage
+            workers=4,                    # Multiple workers for better throughput
+            limit_concurrency=50,         # Higher concurrent connections
+            timeout_keep_alive=30,        # Longer keep-alive timeout
+            access_log=True,              # Enable access logs
+            server_header=True,           # Enable server header
+            date_header=True,             # Enable date header
+            log_level="info",             # Standard logging
+            loop="uvloop",                # Use uvloop for better performance
+            http="httptools"              # Use httptools for better performance
         )
     except Exception as e:
         logger.error(f"Failed to start server: {e}")
