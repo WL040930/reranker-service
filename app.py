@@ -51,13 +51,13 @@ def main() -> None:
     host = os.getenv("RERANKER_HOST", "0.0.0.0")
     port = int(os.getenv("RERANKER_PORT", "7860"))
     
-    logger.info("🚀 Starting Reranker Service (HF Spaces Optimized)")
+    logger.info("🚀 Starting Reranker Service (BAAI BGE Optimized)")
     logger.info(f"   Host: {host}:{port}")
     logger.info(f"   Model: {os.getenv('RERANKER_MODEL_NAME')}")
     logger.info(f"   Max Length: {os.getenv('RERANKER_MAX_LENGTH')}")
     logger.info(f"   Cache Size: {os.getenv('RERANKER_CACHE_SIZE')}")
     logger.info(f"   Preload Model: {os.getenv('RERANKER_PRELOAD_MODEL')}")
-    logger.info("   Memory Target: ~300MB (HF Spaces optimized)")
+    logger.info("   Memory Target: ~600-800MB (BGE reranker)")
     
     try:
         # Uvicorn configuration optimized for HF Spaces

@@ -22,19 +22,19 @@ ENV TOKENIZERS_PARALLELISM=false \
 
 # Model Configuration:
 # RERANKER_MODEL_NAME: HuggingFace model name for cross-encoder reranking
-#   Default: cross-encoder/ms-marco-TinyBERT-L-2-v2 (memory-optimized for HF Spaces)
-#   Alternative: cross-encoder/ms-marco-MiniLM-L-6-v2
-ENV RERANKER_MODEL_NAME=cross-encoder/ms-marco-TinyBERT-L-2-v2
+#   Default: BAAI/bge-reranker-base (high-performance multilingual reranker)
+#   Alternative: cross-encoder/ms-marco-TinyBERT-L-2-v2
+ENV RERANKER_MODEL_NAME=BAAI/bge-reranker-base
 
 # RERANKER_MAX_LENGTH: Maximum token length for input sequences
-#   Default: 64 (memory-optimized for HF Spaces)
+#   Default: 512 (optimized for BAAI/bge-reranker-base)
 #   Alternative: 256
-ENV RERANKER_MAX_LENGTH=64
+ENV RERANKER_MAX_LENGTH=512
 
 # RERANKER_CACHE_SIZE: Number of queries to cache in memory
-#   Default: 4 (memory-optimized for HF Spaces)
-#   Alternative: 32
-ENV RERANKER_CACHE_SIZE=4
+#   Default: 8 (balanced for BAAI/bge-reranker-base)
+#   Alternative: 4 for tight memory, 32 for high performance
+ENV RERANKER_CACHE_SIZE=8
 
 # RERANKER_CACHE_TTL_SECONDS: Cache time-to-live in seconds
 #   Default: 600 (10 minutes)
