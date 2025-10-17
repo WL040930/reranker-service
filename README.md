@@ -10,20 +10,20 @@ pinned: false
 
 # 🧠 Reranker Service (FastAPI + Docker)
 
-This Space runs a **FastAPI-based reranker microservice** using `cross-encoder/ms-marco-TinyBERT-L-2-v2`.  
-It’s deployed via Docker for better compatibility with custom frameworks.
+FastAPI microservice that exposes a cross-encoder reranker with memory-aware defaults.
+Local runs default to the lightweight `cross-encoder/ms-marco-TinyBERT-L-2-v2`, while the
+Docker image is tuned for higher-accuracy `BAAI/bge-reranker-base`.
 
-## ✅ Optimization Results
+## ✨ Features
+- FastAPI HTTP API with async inference and caching
+- Cross-encoder reranking powered by `sentence-transformers`
+- Background thread pool for CPU-bound scoring
+- Built-in `/health` and `/metrics` endpoints for production monitoring
+- Memory-friendly defaults (limit progress bars, single-thread execution)
 
-- **Startup Memory**: ~50-80 MB (before model loading)
-- **Runtime Memory**: ~355 MB (after model preloading) 
-- **Memory Target**: Successfully under 400MB (well within 512MB limit)
-- **No Progress Bars**: Clean production logs
+## 🔌 Endpoints
 
-### Endpoints
-
-- `POST /rerank`  
-  Request body:
+- `POST /rerank` — rank documents for a given query.
   ```json
   {
     "query": "who founded fastapi",
@@ -34,7 +34,7 @@ It’s deployed via Docker for better compatibility with custom frameworks.
     "top_k": 1
   }
   ```
-  Response:
+  Sample response:
   ```json
   {
     "rankings": [{"index": 0, "score": 0.91}],
@@ -42,86 +42,69 @@ It’s deployed via Docker for better compatibility with custom frameworks.
   }
   ```
 
-- `GET /health` returns `{"status":"ok"}` when the service is ready (lightweight check that doesn't load the model).
+- `GET /health` — lightweight readiness probe (does not force model load).
+- `GET /metrics` — memory (RSS/VMS), CPU usage, thread count.
 
-- `GET /metrics` returns memory usage and performance metrics:
-  ```json
-  {
-    "memory": {
-      "rss_mb": 85.4,
-      "vms_mb": 512.3
-    },
-    "cpu_percent": 2.5,
-    "num_threads": 4
-  }
-  ```
-
-## 🚀 Quick Start
-
-### Option 1: Using Environment Files (Recommended)
+## 🚀 Run Locally
 
 ```bash
-# For development (balanced performance and memory)
-cp .env.dev .env
-python app.py
-
-# For production (512MB servers, preloaded model)  
-cp .env.production .env
-python app.py
-
-# For minimal memory usage (very tight constraints)
-cp .env.minimal .env
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 python app.py
 ```
 
-### Option 2: Direct Run (uses built-in defaults)
+This starts the API on `0.0.0.0:7860` with the TinyBERT model, 64-token max length,
+and a small cache to stay under ~400 MB once warmed.
+
+### Test the API
 
 ```bash
-python app.py
+curl -X POST http://localhost:7860/rerank \
+  -H "Content-Type: application/json" \
+  -d '{"query":"how to deploy fastapi", "documents":[{"text":"Use Uvicorn with Gunicorn."}]}'
 ```
 
-The server will:
-1. **Load configuration** from `.env` file or use optimized defaults
-2. **Preload** the model during startup (~10-15 seconds) 
-3. **Listen** on the configured host/port
-4. **Be ready** for immediate requests without loading delays
+## 🐳 Run with Docker
 
-## 📊 Key Optimizations
+```bash
+docker build -t reranker-service .
+docker run --rm -p 7860:7860 reranker-service
+```
 
-### Memory Features
-- ✅ **Tiny Model**: Uses `cross-encoder/ms-marco-TinyBERT-L-2-v2` (17.6MB vs 90MB+)
-- ✅ **Small Cache**: Only 4 cached results (vs 128 default)
-- ✅ **Short Sequences**: Max 64 tokens (vs 512 default)
-- ✅ **Model Preloading**: Loads at startup for immediate responses
-- ✅ **No Progress Bars**: Clean logs for production
+The Docker image preconfigures the service for `BAAI/bge-reranker-base` (higher accuracy,
+~600-800 MB RSS). Mount `/home/app/.cache` if you want to reuse downloaded models:
 
-### Performance Features
-- ✅ **Fast Startup**: Model preloads automatically
-- ✅ **Proper Scoring**: Returns real relevance scores
-- ✅ **Error Handling**: Graceful fallbacks
-- ✅ **Memory Monitoring**: Built-in metrics endpoint
+```bash
+docker run --rm -p 7860:7860 \
+  -v "$HOME/.cache/huggingface":/home/app/.cache/huggingface \
+  reranker-service
+```
 
-## 🔧 Configuration Options
+## ⚙️ Configuration
 
-### Environment Files
+| Variable | Default (local) | Notes |
+|----------|-----------------|-------|
+| `RERANKER_MODEL_NAME` | `cross-encoder/ms-marco-TinyBERT-L-2-v2` | Docker overrides to `BAAI/bge-reranker-base`. |
+| `RERANKER_MAX_LENGTH` | `64` | Docker sets `512` for BGE; reduce for memory-constrained runs. |
+| `RERANKER_CACHE_SIZE` | `4` | Cache of rerank results (`cachetools.TTLCache`). |
+| `RERANKER_CACHE_TTL_SECONDS` | `180` | Adjust to keep results longer. |
+| `RERANKER_REQUEST_TIMEOUT_SECONDS` | `30.0` | Protect against slow scoring. |
+| `RERANKER_PRELOAD_MODEL` | `true` | Skip preloading (`false`) to save startup memory. |
+| `RERANKER_LOG_LEVEL` | `INFO` | Accepts any stdlib logging level. |
+| `RERANKER_HOST` | `0.0.0.0` | Usually leave as-is. |
+| `RERANKER_PORT` | `7860` | Change to remap without Docker. |
 
-| File | Use Case | Memory Usage | Features |
-|------|----------|--------------|----------|
-| `.env.dev` | Development | ~355MB | Balanced performance, preloading |
-| `.env.production` | Production 512MB servers | ~355MB | Preloaded, clean logs |
-| `.env.minimal` | Very tight memory | ~200-250MB | No preloading, minimal cache |
+> Note: The `Dockerfile` exports production-friendly defaults; override any of them at runtime
+with `-e KEY=value` or a `.env` file.
 
-### Key Settings
+## 🩺 Observability & Operations
+- `/health` readiness endpoint is safe for tight probes (no model load).
+- `/metrics` reports RSS/VMS, CPU percent, thread count; integrate with HF Spaces or custom
+  monitors.
+- Logs suppress noisy progress bars and highlight model selection, memory usage, and errors.
 
-Each environment file configures:
-- **Model**: TinyBERT vs MiniLM models
-- **Memory**: Cache size, sequence length  
-- **Performance**: Preloading, timeout settings
-- **Environment**: Host, port, logging level
-
-## 🏗️ Production Ready
-
-- **Memory Limit**: Consistently stays under 400MB
-- **Clean Logging**: No progress bars in production
-- **Health Checks**: `/health` and `/metrics` endpoints
-- **Error Handling**: Graceful fallbacks for edge cases
+## 🧠 Memory Tips
+- Prefer the TinyBERT default when running on <512 MB RAM environments.
+- Lower `RERANKER_MAX_LENGTH` or reduce the cache size for additional savings.
+- Disable preloading to defer model load until the first request, trading latency for memory.
